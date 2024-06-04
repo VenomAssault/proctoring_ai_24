@@ -17,6 +17,7 @@ class Proctor:
         self.attempt_id = attempt_id
         self.status = 0
         self.count = 0
+        self.stop = False
         self.cwcount = {}
         self.start_time = datetime.now()
         print(f'Starting proctoring for at {self.start_time}')
@@ -29,7 +30,9 @@ class Proctor:
         self.region = [(10,10), (w-10, 10), (w-10, h-10), (10, h-10)]
         # video writer  
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        os.makedirs('static/proctoring', exist_ok=True)
         self.video_save_path = f"static/protoring/exam_{self.user_id}_{self.exam_id}_{self.attempt_id}.mp4"
+        print("save location:",self.video_save_path)
         self.video_writer = cv2.VideoWriter(
             self.video_save_path,
             fourcc, fps, (w, h)
@@ -74,18 +77,24 @@ class Proctor:
             self.video_writer.write(im)
             if frame_count % 10 == 0:
                 print(f'Frame {frame_count}')
+                print('saving')
+            if self.stop:
+                break
+        self.cap.release()
+        self.video_writer.release()
+        cv2.destroyAllWindows()
+        print("video writer released")
         print('Proctoring ended')
+        print("window closed")
 
     def stop_proctoring(self):
-        self.video_writer.release()
         self.status = 2
-        cv2.destroyAllWindows()
-        self.thread.join() # wait for the thread to finish
-
+       
     def get_status(self):
         return self.status
 
 
 # start proctoring
 if __name__ == '__main__':
-    proctor = Proctor(1, 1, 1, 10)
+    proctor = Proctor(1, 1, 1, )
+    proctor.start_proctoring()

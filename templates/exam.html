@@ -163,7 +163,7 @@
                 document.querySelector('#option1').textContent = data.option_a;
                 document.querySelector('#option2').textContent = data.option_b;
                 document.querySelector('#option3').textContent = data.option_c;
-                document.querySelector('#option4').textContent = data.option_b;
+                document.querySelector('#option4').textContent = data.option_d;
                 document.querySelector('#marks').textContent = data.marks;
             });
     }
@@ -189,23 +189,30 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        answer: item.previousElementSibling.textContent,
+                        answer: item.previousElementSibling.previousElementSibling.textContent,
                     }),
-                })
-                    .then(response => response.json())
-                    .then(data => {
-                        console.log(data);
-                        counter++;
-                        if (counter <= totalQuestions) {
-                            loadQuestion(counter, examId);
-                        } else {
-                            // show a non blocking alert
-                            setTimeout(() => {
-                                alert('Exam Completed');
-                                window.location.href = `/exam/${examId}/save?path=${video_path}`;
-                            }, 1000);
-                        }
-                    });
+                }).then(response => response.json()).then(data => {
+                    console.log(data);
+                    counter++;
+                    console.log(counter)
+                    console.log(totalQuestions)
+                    console.log(counter<=totalQuestions)
+                    if (counter <= totalQuestions) {
+                        loadQuestion(counter, examId);
+                    } else if (data.error) {
+                        // show a non blocking alert
+                        setTimeout(() => {
+                            alert('Exam Completed');
+                            window.location.href = `/exam/${examId}/save?path=${video_path}`;
+                        }, 1000);
+                    } else{
+                        // show a non blocking alert
+                        setTimeout(() => {
+                            alert('Exam Completed');
+                            window.location.href = `/exam/${examId}/save?path=${video_path}`;
+                        }, 1000);
+                    }
+                });
             });
         });
 

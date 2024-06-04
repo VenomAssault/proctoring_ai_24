@@ -10,6 +10,7 @@ from threading import Thread
 app = Flask(__name__)
 app.secret_key = 'random string'
 
+thread = None
 proctoring_instance = None
 
 @app.route('/')
@@ -82,11 +83,12 @@ def dashboard():
     db = opendb()
     # load exams
     exams = db.query(Exam).all()
-    attempts = db.query(Attempt).filter(Attempt.user_id == 1).all()
+    print(session)
+    attempts = db.query(Attempt).filter(Attempt.user_id == session['userid']).all()
     for attempt in attempts:
         attempt.exam = db.query(Exam).filter(Exam.id == attempt.exam_id).first()
     for exam in exams:
-        exam.attempt = db.query(Attempt).filter(Attempt.user_id == 1, Attempt.exam_id == exam.id).first()
+        exam.attempt = db.query(Attempt).filter(Attempt.user_id == session['userid'], Attempt.exam_id == exam.id).first()
     return render_template('dashboard.html', exams=exams, attempts=attempts)
 
 # admin dashboard
@@ -234,7 +236,10 @@ def delete_user(id):
 # start exam
 @app.route('/exam/<int:id>')
 def exam(id):
+    global thread
     global proctoring_instance
+    print(session)
+    print(session['userid'])
     if not session.get('isauth'):
         return redirect('/login')
     db = opendb()
@@ -244,20 +249,26 @@ def exam(id):
         flash('Exam not found', 'danger')
         return redirect('/dashboard')
     # create an attempt entry if not exists and last attempt is 1 hour ago
-    attempt = db.query(Attempt).filter(Attempt.user_id == 1, Attempt.exam_id == id).first()
+    attempt = db.query(Attempt).filter(Attempt.user_id == session['userid'], Attempt.exam_id == id).first()
     if not attempt:
-        attempt = Attempt(user_id=1, exam_id=id, created_at=datetime.now())
+        attempt = Attempt(user_id=session['userid'], exam_id=id, created_at=datetime.now())
         save(attempt)
     else:
         if (datetime.now() - attempt.created_at).seconds > 100:
-            attempt = Attempt(user_id=1, exam_id=id, created_at=datetime.now())
+            attempt = Attempt(user_id=session['userid'], exam_id=id, created_at=datetime.now())
             save(attempt)
         else:
             flash('You have already attempted this exam', 'danger')
             return redirect('/dashboard')
     total_questions = db.query(Question).filter(Question.exam_id == id).count()
     # start proctoring
-    last_attempt_id = db.query(Attempt).filter(Attempt.user_id == 1, Attempt.exam_id == id).order_by(Attempt.id.desc()).first().id
+    last_attempt = db.query(Attempt).filter(Attempt.user_id == session['userid'], Attempt.exam_id == id).order_by(Attempt.id.desc()).all()[0]
+    print('last attempt obj:', last_attempt)
+    if last_attempt:
+        last_attempt_id = last_attempt.id
+    else:
+        last_attempt_id = 0
+    print(f'last attempt id {last_attempt_id}')
     proctoring_instance = Proctor(
         user_id=session.get('userid'), 
         exam_id=id, 
@@ -268,7 +279,7 @@ def exam(id):
     thread = Thread(target=proctoring_instance.start_proctoring)
     thread.start()
     print('Proctoring started')
-    return render_template('exam.html', exam=exam, total_questions=total_questions, video_path=proctor.video_save_path)
+    return render_template('exam.html', exam=exam, total_questions=total_questions, video_path=proctoring_instance.video_save_path)
 
 # load exam question
 @app.route('/exam/<int:exam_id>/question/<int:question_id>', methods=['GET', 'POST'])
@@ -276,22 +287,33 @@ def exam_question(exam_id, question_id):
     
     db = opendb()
     exam = db.query(Exam).filter(Exam.id == exam_id).first()
-    attempt = db.query(Attempt).filter(Attempt.user_id == 1, Attempt.exam_id == exam_id).first()
+    attempt = db.query(Attempt).filter(Attempt.user_id == session['userid'], Attempt.exam_id == exam_id).order_by(Attempt.id.desc()).all()[0]
     question = db.query(Question).filter(Question.id == question_id).first()
     if request.method == 'POST':
-        answer = request.form.get('answer')
+        data = request.json
+        answer = data.get('answer')
+        print("ANSWER IS CORRECT?", question.correct_option == answer)
+        print('your answer is ', request.json)
         if not answer:
-            flash('Please select an answer', 'danger')
             return redirect(f'/exam/{exam_id}/question/{question_id}')
         # save answer
-        ans = Answer(user_id=1, exam_id=exam_id, question_id=question_id, attempt_id=attempt.id, answer=answer, created_at=datetime.now())
+        ans = Answer(
+            user_id=session['userid'], 
+            exam_id=exam_id, 
+            question_id=question_id, 
+            attempt_id=attempt.id, 
+            answer=answer, 
+            is_correct = question.correct_option == answer,
+            created_at=datetime.now())
         save(ans)
         # redirect to next question
-        next_question = db.query(Question).filter(Question.exam_id == exam_id, Question.id > question_id).first()
+        next_question = opendb().query(Question).filter(Question.exam_id == exam_id, Question.id > question_id).first()
+        print("Next question", next_question)
         if next_question:
             return redirect(f'/exam/{exam_id}/question/{next_question.id}')
-        else:
-            return redirect('/dashboard')
+        return json.dumps({
+            'error': 'no questions found'
+        })
     
     return json.dumps({
         'question': question.question, 
@@ -308,19 +330,28 @@ def exam_question(exam_id, question_id):
 
 @app.route('/exam/<int:exam_id>/save', methods=['GET', 'POST'])
 def finish_exam(exam_id):
+    global proctoring_instance, thread
     if proctoring_instance:
         proctoring_instance.status = 2
+        proctoring_instance.stop = True
+        print("proctoring instances", proctoring_instance.status)
+        thread.join()
+        # proctoring_instance.stop_proctoring()
 
     db = opendb()
-    attempt = db.query(Attempt).filter(Attempt.user_id == 1, Attempt.exam_id == exam_id).first()
+    attempt = db.query(Attempt).filter(Attempt.user_id == session['userid'], Attempt.exam_id == exam_id).order_by(Attempt.created_at).all()[-1]
+    print(attempt, attempt.id)
     answers = db.query(Answer).filter(Answer.attempt_id == attempt.id).all()
     total_marks = 0
     for ans in answers:
         question = db.query(Question).filter(Question.id == ans.question_id).first()
-        if ans.answer == question.correct_option:
+        if ans.is_correct:
             total_marks += question.marks
+            print('adding marks', question.marks)
+        else:
+            print("answer is incorrect", ans.is_correct)
     attempt.score = total_marks
-    save(attempt)
+    save(attempt, db, close=False)
     path = request.args.get('path')
     proctorlog = ProctorLog(
         user_id=session.get('userid'), 

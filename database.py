@@ -12,11 +12,13 @@ def opendb():
     session = Session()
     return session
 
-def save(obj):
-    session = opendb()
-    session.add(obj)
-    session.commit()
-    session.close()
+def save(obj, db=None, close=True):
+    if not db:
+        db = opendb()
+    db.add(obj)
+    db.commit()
+    if close:
+        db.close()
 
 def get_all(obj):
     session = opendb()
